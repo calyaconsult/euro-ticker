@@ -10,3 +10,6 @@ Eine minimalistische Web-App, die den Euro-Referenzkurs der Europäischen Zentra
 - 🌙 Dunkles, minimalistisches Design
 - 📱 Responsive (Desktop & Mobile)
 - 🔄 Automatische tägliche Aktualisierung via Cron Job
+
+Hinweis: Die Daten zum Eurokurs gehören der EZB. 
+Darüber, wie sie verwendet werden dürfen gibt die Seite [Haftungsausschluss und Urheberrecht](https://www.ecb.europa.eu/services/using-our-site/disclaimer/html/index.de.html) der EZB Auskunft.
