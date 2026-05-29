@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EUR/CHF Ticker</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #1a1a2e;
+            color: #ffffff;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            padding: 2rem;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+
+        .header h1 {
+            font-size: 1.2rem;
+            color: #888;
+            font-weight: 400;
+            margin-bottom: 0.5rem;
+        }
+
+        .current-rate {
+            font-family: 'SF Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: 3rem;
+            font-weight: 700;
+            color: #ffffff;
+        }
+
+        .change {
+            font-family: 'SF Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: 1.2rem;
+            margin-top: 0.5rem;
+        }
+
+        .change.positive { color: #4caf50; }
+        .change.negative { color: #f44336; }
+        .change.neutral { color: #888; }
+
+        .date-info {
+            color: #666;
+            font-size: 0.85rem;
+            margin-top: 0.5rem;
+        }
+
+        .time-buttons {
+            display: flex;
+            justify-content: center;
+            gap: 0.5rem;
+            margin: 1.5rem 0;
+            flex-wrap: wrap;
+        }
+
+        .time-buttons button {
+            background: #16213e;
+            color: #888;
+            border: 1px solid #333;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+        }
+
+        .time-buttons button:hover {
+            border-color: #003399;
+            color: #fff;
+        }
+
+        .time-buttons button.active {
+            background: #003399;
+            color: #fff;
+            border-color: #003399;
+        }
+
+        .chart-container {
+            position: relative;
+            width: 100%;
+            height: 400px;
+            margin-top: 1rem;
+        }
+
+        .loading {
+            text-align: center;
+            color: #666;
+            padding: 2rem;
+        }
+
+        .source {
+            text-align: center;
+            margin-top: 1.5rem;
+            font-size: 0.75rem;
+            color: #555;
+        }
+
+        .source a {
+            color: #003399;
+            text-decoration: none;
+        }
+
+        @media (max-width: 600px) {
+            body { padding: 1rem; }
+            .current-rate { font-size: 2rem; }
+            .chart-container { height: 280px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>EUR/CHF Referenzkurs (EZB)</h1>
+            <div class="current-rate" id="currentRate">—</div>
+            <div class="change neutral" id="change">Laden...</div>
+            <div class="date-info" id="dateInfo"></div>
+        </div>
+
+        <div class="time-buttons">
+            <button data-range="1M">1M</button>
+            <button data-range="6M">6M</button>
+            <button data-range="1Y" class="active">1J</button>
+            <button data-range="5Y">5J</button>
+            <button data-range="MAX">Max</button>
+        </div>
+
+        <div class="chart-container">
+            <canvas id="chart"></canvas>
+        </div>
+
+        <div class="source">
+            Quelle: <a href="https://www.ecb.europa.eu/stats/policy_and_exchange_rates/euro_reference_exchange_rates/html/eurofxref-graph-chf.de.html" target="_blank">Europäische Zentralbank</a> · Referenzkurs, werktäglich ca. 16:00 Uhr
+        </div>
+    </div>
+
+    <script>
+        let allData = [];
+        let chart = null;
+        let currentRange = '1Y';
+
+        // ============================================================
+        // Daten laden: History (JSON) + aktuelle Kurse (RSS)
+        // ============================================================
+
+        async function loadData() {
+            try {
+                // 1. Historische Daten laden
+                const historyResponse = await fetch('eurchf-history.json');
+                const historyData = await historyResponse.json();
+                allData = historyData;
+
+                // 2. RSS-Feed für aktuelle Kurse laden
+                try {
+                    const rssResponse = await fetch('fxref-chf.xml');
+                    const rssText = await rssResponse.text();
+                    const rssData = parseRSS(rssText);
+
+                    // Neue Datenpunkte aus RSS ergänzen (falls neuer als letzter History-Eintrag)
+                    const lastHistoryDate = allData[allData.length - 1]?.date || '';
+                    for (const point of rssData) {
+                        if (point.date > lastHistoryDate) {
+                            allData.push(point);
+                        }
+                    }
+                } catch (e) {
+                    console.warn('RSS-Feed konnte nicht geladen werden, verwende nur History:', e);
+                }
+
+                // Sortieren
+                allData.sort((a, b) => a.date.localeCompare(b.date));
+
+                updateDisplay();
+                createChart();
+
+            } catch (e) {
+                document.getElementById('currentRate').textContent = 'Fehler beim Laden';
+                document.getElementById('change').textContent = e.message;
+                console.error(e);
+            }
+        }
+
+        // ============================================================
+        // RSS-Feed parsen
+        // ============================================================
+
+        // ============================================================
+        // RSS-Feed parsen
+        // ============================================================
+
+        function parseRSS(xmlText) {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(xmlText, 'text/xml');
+            const data = [];
+
+            // Alle rdf:li Elemente mit rdf:resource Attribut finden
+            const items = doc.querySelectorAll('li');
+
+            // Fallback: auch direkt im Text nach dem URL-Pattern suchen
+            if (items.length === 0) {
+                const regex = /date=(\d{4}-\d{2}-\d{2})&amp;rate=([\d.]+)/g;
+                let match;
+                while ((match = regex.exec(xmlText)) !== null) {
+                    data.push({ date: match[1], rate: parseFloat(match[2]) });
+                }
+            } else {
+                items.forEach(item => {
+                    const resource = item.getAttribute('resource') ||
+                                     item.getAttributeNS('http://www.w3.org/1999/02/22-rdf-syntax-ns#', 'resource');
+                    if (resource) {
+                        const dateMatch = resource.match(/date=([\d-]+)/);
+                        const rateMatch = resource.match(/rate=([\d.]+)/);
+                        if (dateMatch && rateMatch) {
+                            data.push({
+                                date: dateMatch[1],
+                                rate: parseFloat(rateMatch[1])
+                            });
+                        }
+                    }
+                });
+            }
+
+            // Falls querySelector nicht greift (Namespace-Probleme), Regex-Fallback
+            if (data.length === 0) {
+                const regex = /date=([\d-]+)[^"]*?rate=([\d.]+)/g;
+                let match;
+                while ((match = regex.exec(xmlText)) !== null) {
+                    data.push({ date: match[1], rate: parseFloat(match[2]) });
+                }
+            }
+
+            return data;
+        }
+
+
+        // ============================================================
+        // Anzeige aktualisieren
+        // ============================================================
+
+        function updateDisplay() {
+            if (allData.length < 2) return;
+
+            const latest = allData[allData.length - 1];
+            const previous = allData[allData.length - 2];
+            const diff = latest.rate - previous.rate;
+
+            document.getElementById('currentRate').textContent =
+                `1 EUR = ${latest.rate.toFixed(4)} CHF`;
+
+            const arrow = diff > 0 ? '↑' : diff < 0 ? '↓' : '→';
+            const sign = diff > 0 ? '+' : '';
+            const changeEl = document.getElementById('change');
+            changeEl.textContent = `${sign}${diff.toFixed(4)} ${arrow}`;
+            changeEl.className = `change ${diff > 0 ? 'positive' : diff < 0 ? 'negative' : 'neutral'}`;
+
+            document.getElementById('dateInfo').textContent =
+                `Stand: ${formatDate(latest.date)}`;
+        }
+
+        function formatDate(dateStr) {
+            const d = new Date(dateStr);
+            return d.toLocaleDateString('de-CH', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        }
+
+        // ============================================================
+        // Chart erstellen
+        // ============================================================
+
+        function createChart() {
+            const filtered = filterByRange(currentRange);
+            const ctx = document.getElementById('chart').getContext('2d');
+
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: filtered.map(d => d.date),
+                    datasets: [{
+                        data: filtered.map(d => d.rate),
+                        borderColor: '#003399',
+                        backgroundColor: 'rgba(0, 51, 153, 0.1)',
+                        borderWidth: 1.5,
+                        pointRadius: 0,
+                        pointHitRadius: 10,
+                        fill: true,
+                        tension: 0.1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            backgroundColor: '#16213e',
+                            titleColor: '#888',
+                            bodyColor: '#fff',
+                            bodyFont: { family: 'monospace', size: 14 },
+                            displayColors: false,
+                            callbacks: {
+                                title: (items) => formatDate(items[0].label),
+                                label: (item) => `1 EUR = ${item.raw.toFixed(4)} CHF`
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            type: 'time',
+                            time: { unit: getTimeUnit(currentRange) },
+                            grid: { color: 'rgba(255,255,255,0.05)' },
+                            ticks: { color: '#666', maxTicksLimit: 8 }
+                        },
+                        y: {
+                            grid: { color: 'rgba(255,255,255,0.05)' },
+                            ticks: {
+                                color: '#666',
+                                callback: (val) => val.toFixed(2)
+                            }
+                        }
+                    },
+                    interaction: {
+                        intersect: false,
+                        mode: 'index'
+                    }
+                }
+            });
+        }
+
+        function filterByRange(range) {
+            if (range === 'MAX') return allData;
+
+            const now = new Date(allData[allData.length - 1].date);
+            let start = new Date(now);
+
+            switch (range) {
+                case '1M': start.setMonth(start.getMonth() - 1); break;
+                case '6M': start.setMonth(start.getMonth() - 6); break;
+                case '1Y': start.setFullYear(start.getFullYear() - 1); break;
+                case '5Y': start.setFullYear(start.getFullYear() - 5); break;
+            }
+
+            const startStr = start.toISOString().split('T')[0];
+            return allData.filter(d => d.date >= startStr);
+        }
+
+        function getTimeUnit(range) {
+            switch (range) {
+                case '1M': return 'day';
+                case '6M': return 'week';
+                case '1Y': return 'month';
+                case '5Y': return 'quarter';
+                case 'MAX': return 'year';
+            }
+        }
+
+        function updateChart(range) {
+            currentRange = range;
+            const filtered = filterByRange(range);
+            chart.data.labels = filtered.map(d => d.date);
+            chart.data.datasets[0].data = filtered.map(d => d.rate);
+            chart.options.scales.x.time.unit = getTimeUnit(range);
+            chart.update();
+        }
+
+        // ============================================================
+        // Event Listeners
+        // ============================================================
+
+        document.querySelectorAll('.time-buttons button').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.time-buttons button').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                updateChart(btn.dataset.range);
+            });
+        });
+
+        // Start
+        loadData();
+    </script>
+</body>
+</html>
